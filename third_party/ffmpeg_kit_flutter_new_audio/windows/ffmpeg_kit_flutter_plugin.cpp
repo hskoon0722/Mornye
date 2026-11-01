@@ -136,7 +136,9 @@ FFmpegKitFlutterPlugin::FFmpegKitFlutterPlugin(
         &flutter::StandardMethodCodec::GetInstance());
     event_channel_->SetStreamHandler(std::move(handler));
 
-    LoadLibrary();
+    // libffmpegkit.dll is loaded on the first method call (HandleMethodCall).
+    // Loading it starts its log callback thread, and Mornye desktop never
+    // calls the native layer, so most sessions never load it at all.
 }
 
 FFmpegKitFlutterPlugin::~FFmpegKitFlutterPlugin() {
@@ -147,10 +149,10 @@ FFmpegKitFlutterPlugin::~FFmpegKitFlutterPlugin() {
     }
     UnregisterClassW(kMsgWindowClass, GetModuleHandle(nullptr));
     event_sink_owner_.reset();
-    if (lib_) {
-        FreeLibrary(lib_);
-        lib_ = nullptr;
-    }
+    // No FreeLibrary: the library's callback thread is still running, and
+    // unloading libffmpegkit (and with it libwinpthread-1.dll) under that
+    // thread crashes with 0xc0000005 in libwinpthread-1.dll_unloaded.
+    // The process exit releases the library.
 }
 
 void FFmpegKitFlutterPlugin::EnqueueEvent(flutter::EncodableValue event) {
@@ -515,8 +517,12 @@ void FFmpegKitFlutterPlugin::HandleMethodCall(
     std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
 
     if (!lib_) {
-        result->Error("LIBRARY_NOT_LOADED", "libffmpegkit.dll not loaded");
-        return;
+        if (!LoadLibrary()) {
+            result->Error("LIBRARY_NOT_LOADED", "libffmpegkit.dll not loaded");
+            return;
+        }
+        // The event channel may have connected before the library loaded.
+        if (event_sink_owner_) RegisterCallbacks();
     }
 
     const auto& method = method_call.method_name();
