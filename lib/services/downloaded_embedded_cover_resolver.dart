@@ -649,6 +649,15 @@ class DownloadedEmbeddedCoverResolver {
         }
       }
 
+      // Local build: no new preview extraction on Windows. Writing previews
+      // as temp files renamed over in bursts is what got the app terminated
+      // on this PC. Callers fall back to the online cover; previews already
+      // on disk are still reused above.
+      if (Platform.isWindows) {
+        _rememberFailedExtract(cleanPath);
+        return null;
+      }
+
       if (persistentPath != null) {
         final directory = File(persistentPath).parent;
         outputPath = p.join(
